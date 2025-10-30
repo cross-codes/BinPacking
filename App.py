@@ -16,9 +16,16 @@ class App:
         self.status_var: tk.StringVar = tk.StringVar(
             value='Enter plot size and rooms, then click "Generate valid layouts"'
         )
+
         root.title("this planner is fixed")
 
         ctrl = ttk.Frame(root)
+        # Multi-corridor controls
+        self.use_multi_var = tk.BooleanVar(value=True)
+        self.corridor_k_var = tk.StringVar(value="")  # empty = auto
+
+        
+
         ctrl.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         ttk.Label(ctrl, text="Total plot width").grid(row=0, column=0, sticky="w")
@@ -44,26 +51,32 @@ class App:
             row=0, column=7, padx=(16, 2)
         )
                 # --- New controls ---
-        self.allow_multi_var = tk.BooleanVar(value=True)  # try multi-corridor variants
+        # --- Row 1: corridor controls (no overlap) ---
+        self.allow_multi_var = tk.BooleanVar(value=True)   # single source of truth
         ttk.Checkbutton(
-            ctrl, text="Try multi-corridor", variable=self.allow_multi_var
-        ).grid(row=0, column=8, padx=(16, 4))
+            ctrl,
+            text="Try multi-corridor",
+            variable=self.allow_multi_var,
+            command=lambda: self.k_spinbox.config(
+                state=("normal" if self.allow_multi_var.get() else "disabled")
+            ),
+        ).grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
 
-        ttk.Label(ctrl, text="Show").grid(row=0, column=9, padx=(12, 4), sticky="e")
+        ttk.Label(ctrl, text="Corridors (k)").grid(row=1, column=1, sticky="e", pady=(6, 0))
+        self.k_var = tk.StringVar(value="")  # empty = auto (maximize)
+        self.k_spinbox = tk.Spinbox(ctrl, from_=1, to=99, textvariable=self.k_var, width=5, state="normal")
+        self.k_spinbox.grid(row=1, column=2, sticky="w", padx=(4, 12), pady=(6, 0))
+
+        ttk.Label(ctrl, text="Show").grid(row=1, column=3, sticky="e", padx=(0, 4), pady=(6, 0))
         self.heuristic_filter_var = tk.StringVar(value="All")
         self.heuristic_filter = ttk.Combobox(
             ctrl,
             textvariable=self.heuristic_filter_var,
             state="readonly",
             width=16,
-            values=[
-                "All",
-                "Multi-vertical",
-                "Single-vertical",
-                "Single-horizontal",
-            ],
+            values=["All", "Multi-vertical", "Single-vertical", "Single-horizontal"],
         )
-        self.heuristic_filter.grid(row=0, column=10, padx=(0, 4))
+        self.heuristic_filter.grid(row=1, column=4, sticky="w", pady=(6, 0))
 
 
         main_frame = ttk.Frame(root)
@@ -113,7 +126,27 @@ class App:
             _ = messagebox.showinfo("No rooms", "Please enter at least one room.")
             return
 
-        self.valid_layouts = PackingHeuristics.generate_layouts(plot_w, plot_h, rooms)
+        # Decide desired_k based on checkbox
+        # Decide desired_k based on checkbox
+        desired_k = None
+        if self.allow_multi_var.get():
+            k_text = self.k_var.get().strip()
+            desired_k = int(k_text) if k_text.isdigit() and int(k_text) >= 1 else None
+
+        self.valid_layouts = PackingHeuristics.generate_layouts(plot_w, plot_h, rooms, desired_k=desired_k)
+
+        # Filter by heuristic selection
+        f = self.heuristic_filter_var.get()
+        if not self.allow_multi_var.get():
+            self.valid_layouts = [L for L in self.valid_layouts if getattr(L, "heuristic", "") != "multi-vertical"]
+        if f == "Multi-vertical":
+            self.valid_layouts = [L for L in self.valid_layouts if getattr(L, "heuristic", "") == "multi-vertical"]
+        elif f == "Single-vertical":
+            self.valid_layouts = [L for L in self.valid_layouts if getattr(L, "heuristic", "") == "single-vertical"]
+        elif f == "Single-horizontal":
+            self.valid_layouts = [L for L in self.valid_layouts if getattr(L, "heuristic", "") == "single-horizontal"]
+
+
                 # --- Apply user choices ---
 
         # (a) If multi-corridor is disabled, drop multi layouts

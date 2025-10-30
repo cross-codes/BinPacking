@@ -296,29 +296,37 @@ class PackingHeuristics:
         return layout
 
     @staticmethod
-    # Try vertical and horizontal with all kinds of sorting keys
     def generate_layouts(
-        plot_w: float, plot_h: float, rooms: list[RoomSpec]
+        plot_w: float,
+        plot_h: float,
+        rooms: list[RoomSpec],
+        desired_k: int | None = None,   # pass None to auto-pick max feasible k
     ) -> list[Layout]:
         if plot_w <= 0 or plot_h <= 0:
             return []
 
+        # Select rooms under the global area cap first (70% if AREA_FRACTION_LIMIT=0.7)
         cap = AREA_FRACTION_LIMIT * plot_w * plot_h
         selected, leftover = PackingHeuristics.select_rooms_by_area_greedy(rooms, cap)
         if not selected:
             return []
 
-        # Initialize layouts before using it (fixes UnboundLocalError)
         layouts: list[Layout] = []
 
-        # Try multi-corridor packing first
+        # ---- Try multi-corridor vertical layouts first (optional exact k via desired_k) ----
         multi = PackingHeuristics.try_place_multiple_vertical_corridors(
-            plot_w, plot_h, selected, cw=CORRIDOR_WIDTH_UNITS, target_area_fraction=AREA_FRACTION_LIMIT
+            plot_w=plot_w,
+            plot_h=plot_h,
+            rooms=selected,
+            cw=CORRIDOR_WIDTH_UNITS,
+            target_area_fraction=AREA_FRACTION_LIMIT,
+            desired_k=desired_k,
         )
         if multi is not None and getattr(multi, "placed", None):
             multi.unplaced = leftover + getattr(multi, "unplaced", [])
             layouts.append(multi)
 
+        # ---- Existing single-corridor heuristics ----
         sorters = [
             ("area_desc", "rooms by area desc"),
             ("along_desc", "by along-corridor size desc"),
@@ -331,24 +339,21 @@ class PackingHeuristics:
 
         for key, desc in sorters:
             for cx in vx_positions:
-                lay = PackingHeuristics.try_place_vertical(
-                    plot_w, plot_h, selected, cx, key, desc
-                )
-                if lay is not None and lay.placed:
-                    lay.unplaced = leftover + lay.unplaced
-                    layouts.append(lay)
-            for cy in hy_positions:
-                lay = PackingHeuristics.try_place_horizontal(
-                    plot_w, plot_h, selected, cy, key, desc
-                )
+                lay = PackingHeuristics.try_place_vertical(plot_w, plot_h, selected, cx, key, desc)
                 if lay is not None and lay.placed:
                     lay.unplaced = leftover + lay.unplaced
                     layouts.append(lay)
 
+            for cy in hy_positions:
+                lay = PackingHeuristics.try_place_horizontal(plot_w, plot_h, selected, cy, key, desc)
+                if lay is not None and lay.placed:
+                    lay.unplaced = leftover + lay.unplaced
+                    layouts.append(lay)
+
+        # ---- De-duplicate and sort ----
         layouts.sort(key=lambda L: (L.placed_count, L.rooms_area), reverse=True)
         seen: set[tuple[Orientation, float, int]] = set()
         unique: list[Layout] = []
-        # Duplicates
         for L in layouts:
             if L.corridor.orientation == Orientation.VERTICAL:
                 sig = (L.corridor.orientation, round(L.corridor.x, 2), L.placed_count)
@@ -357,7 +362,9 @@ class PackingHeuristics:
             if sig not in seen:
                 seen.add(sig)
                 unique.append(L)
+
         return unique
+
 
 
     @staticmethod
@@ -367,14 +374,14 @@ class PackingHeuristics:
         rooms: list[RoomSpec],
         cw: float = CORRIDOR_WIDTH_UNITS,
         target_area_fraction: float = 0.7,
+        desired_k: int | None = None,   # None = auto (try max feasible). Otherwise try this exact k.
     ) -> Layout | None:
         """
-        Try to place as many *parallel vertical corridors* (each width cw) as possible,
-        while ensuring total room area <= target_area_fraction * plot_area.
-        Corridors are placed evenly; slabs are between corridors and at edges.
-        Rooms are packed into slabs top-down, first-fit, with rotation allowed.
+        Place as many (or exactly desired_k) parallel vertical corridors (width=cw) as possible,
+        while keeping packed room area <= target_area_fraction * plot area.
+        Corridors split the plot into (k+1) vertical slabs; rooms are packed per slab top-down, allowing rotation.
+        Returns the first feasible layout found (max k first if desired_k is None).
         """
-
         if plot_w <= 0 or plot_h <= 0:
             return None
 
@@ -383,14 +390,23 @@ class PackingHeuristics:
         if room_area_budget <= 0:
             return None
 
-        # shortest side of any room (used to check slab feasibility)
+        # shortest side of any room (used to quickly rule out too-narrow slabs)
+        if not rooms:
+            return None
         min_short_side = min(min(r.width, r.height) for r in rooms)
 
-        # very loose upper bound on corridor count
-        max_possible_k = int(plot_w // cw)
+        # k search order
+        max_possible_k = int(plot_w // cw)  # loose bound
+        if max_possible_k < 1:
+            return None
 
-        # Try k from largest to smallest — prefer more corridors
-        for k in range(max_possible_k, 0, -1):
+        if desired_k is not None:
+            k0 = max(1, min(desired_k, max_possible_k))
+            k_values = [k0]  # exact-k behavior
+        else:
+            k_values = list(range(max_possible_k, 0, -1))  # try most corridors first
+
+        for k in k_values:
             total_corridor_width = k * cw
             if total_corridor_width >= plot_w - 1e-9:
                 continue
@@ -399,24 +415,24 @@ class PackingHeuristics:
             num_slabs = k + 1
             slab_width = total_slabs_width / num_slabs
 
-            # ensure at least some room can use a slab
+            # slab must be wide enough to fit at least the narrowest room side
             if slab_width + 1e-9 < min_short_side:
                 continue
 
-            # area left for rooms after carving corridors
+            # area left for rooms after corridors
             available_area_for_rooms = plot_area - (k * cw * plot_h)
             if available_area_for_rooms + 1e-9 < room_area_budget:
-                # too many corridors to reach room area budget
+                # carving too many corridors leaves insufficient area to reach the 70% budget
                 continue
 
-            # define slab rectangles (x positions)
-            slabs = []
+            # define slabs (x positions)
+            slabs: list[dict] = []
             x_cursor = 0.0
             for i in range(num_slabs):
-                slabs.append({"x": x_cursor, "width": slab_width, "y": 0.0, "used_height": 0.0, "placed": []})
+                slabs.append({"x": x_cursor, "width": slab_width, "used_height": 0.0})
                 x_cursor += slab_width
                 if i < k:
-                    x_cursor += cw  # skip corridor width
+                    x_cursor += cw  # skip a corridor
 
             # greedy pack into slabs (top-down), larger rooms first
             placed: list[PlacedRoom] = []
@@ -440,11 +456,10 @@ class PackingHeuristics:
                                     x=x0,
                                     y=y0,
                                     rotated=rotated,
-                                    side=None,
+                                    side=None,  # slab index not tracked
                                 )
                             )
                             slab["used_height"] += room_h
-                            slab["placed"].append(r.name)
                             placed_flag = True
                             break
                     if placed_flag:
@@ -453,10 +468,8 @@ class PackingHeuristics:
                     unplaced.append(r)
 
             rooms_area = sum(pr.width * pr.height for pr in placed)
-
-            # accept if packed room area stays within budget
             if rooms_area <= room_area_budget + 1e-9:
-                # build corridors list now (between slabs)
+                # construct corridor objects (between slabs)
                 corridors: list[Corridor] = []
                 x_cursor = slab_width
                 for _ in range(k):
@@ -472,7 +485,6 @@ class PackingHeuristics:
                     x_cursor += cw + slab_width
 
                 label = f"{k} vertical corridors (cw={cw})"
-
                 layout = Layout(
                     placed=placed,
                     corridor=corridors[0] if corridors else None,  # legacy single-corridor field
@@ -483,14 +495,11 @@ class PackingHeuristics:
                     label=label,
                     unplaced=unplaced,
                 )
-
-                # extra metadata for UI
+                # attach extras for the UI
                 setattr(layout, "corridors", corridors)
-                setattr(layout, "slabs", slabs)
                 setattr(layout, "heuristic", "multi-vertical")
                 setattr(layout, "k_corridors", len(corridors))
-
                 return layout
 
-        # no multi-corridor packing succeeded
+        # nothing feasible
         return None
