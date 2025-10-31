@@ -16,9 +16,16 @@ class App:
         self.status_var: tk.StringVar = tk.StringVar(
             value='Enter plot size and rooms, then click "Generate valid layouts"'
         )
+
         root.title("this planner is fixed")
 
         ctrl = ttk.Frame(root)
+        # Multi-corridor controls
+        self.use_multi_var = tk.BooleanVar(value=True)
+        self.corridor_k_var = tk.StringVar(value="")  # empty = auto
+
+        
+
         ctrl.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         ttk.Label(ctrl, text="Total plot width").grid(row=0, column=0, sticky="w")
@@ -43,6 +50,34 @@ class App:
         ttk.Button(ctrl, text="Load test sample", command=self.on_sample).grid(
             row=0, column=7, padx=(16, 2)
         )
+                # --- New controls ---
+        # --- Row 1: corridor controls (no overlap) ---
+        self.allow_multi_var = tk.BooleanVar(value=True)   # single source of truth
+        ttk.Checkbutton(
+            ctrl,
+            text="Try multi-corridor",
+            variable=self.allow_multi_var,
+            command=lambda: self.k_spinbox.config(
+                state=("normal" if self.allow_multi_var.get() else "disabled")
+            ),
+        ).grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
+
+        ttk.Label(ctrl, text="Corridors (k)").grid(row=1, column=1, sticky="e", pady=(6, 0))
+        self.k_var = tk.StringVar(value="")  # empty = auto (maximize)
+        self.k_spinbox = tk.Spinbox(ctrl, from_=1, to=99, textvariable=self.k_var, width=5, state="normal")
+        self.k_spinbox.grid(row=1, column=2, sticky="w", padx=(4, 12), pady=(6, 0))
+
+        ttk.Label(ctrl, text="Show").grid(row=1, column=3, sticky="e", padx=(0, 4), pady=(6, 0))
+        self.heuristic_filter_var = tk.StringVar(value="All")
+        self.heuristic_filter = ttk.Combobox(
+            ctrl,
+            textvariable=self.heuristic_filter_var,
+            state="readonly",
+            width=16,
+            values=["All", "Multi-vertical", "Single-vertical", "Single-horizontal"],
+        )
+        self.heuristic_filter.grid(row=1, column=4, sticky="w", pady=(6, 0))
+
 
         main_frame = ttk.Frame(root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -91,7 +126,55 @@ class App:
             _ = messagebox.showinfo("No rooms", "Please enter at least one room.")
             return
 
-        self.valid_layouts = PackingHeuristics.generate_layouts(plot_w, plot_h, rooms)
+        # Decide desired_k based on checkbox
+        # Decide desired_k based on checkbox
+        desired_k = None
+        if self.allow_multi_var.get():
+            k_text = self.k_var.get().strip()
+            desired_k = int(k_text) if k_text.isdigit() and int(k_text) >= 1 else None
+
+        self.valid_layouts = PackingHeuristics.generate_layouts(plot_w, plot_h, rooms, desired_k=desired_k)
+
+        # Filter by heuristic selection
+        f = self.heuristic_filter_var.get()
+        if not self.allow_multi_var.get():
+            self.valid_layouts = [L for L in self.valid_layouts if getattr(L, "heuristic", "") != "multi-vertical"]
+        if f == "Multi-vertical":
+            self.valid_layouts = [L for L in self.valid_layouts if getattr(L, "heuristic", "") == "multi-vertical"]
+        elif f == "Single-vertical":
+            self.valid_layouts = [L for L in self.valid_layouts if getattr(L, "heuristic", "") == "single-vertical"]
+        elif f == "Single-horizontal":
+            self.valid_layouts = [L for L in self.valid_layouts if getattr(L, "heuristic", "") == "single-horizontal"]
+
+
+                # --- Apply user choices ---
+
+        # (a) If multi-corridor is disabled, drop multi layouts
+        if not self.allow_multi_var.get():
+            self.valid_layouts = [
+                L for L in self.valid_layouts
+                if getattr(L, "heuristic", "") != "multi-vertical"
+            ]
+
+        # (b) Apply heuristic filter dropdown
+        f = self.heuristic_filter_var.get()
+        if f == "Multi-vertical":
+            self.valid_layouts = [
+                L for L in self.valid_layouts
+                if getattr(L, "heuristic", "") == "multi-vertical"
+            ]
+        elif f == "Single-vertical":
+            self.valid_layouts = [
+                L for L in self.valid_layouts
+                if getattr(L, "heuristic", "") == "single-vertical"
+            ]
+        elif f == "Single-horizontal":
+            self.valid_layouts = [
+                L for L in self.valid_layouts
+                if getattr(L, "heuristic", "") == "single-horizontal"
+            ]
+        # else "All": no extra filtering
+
         if not self.valid_layouts:
             self.idx = 0
             self.canvas.delete("all")
@@ -119,86 +202,85 @@ class App:
         self.canvas.delete("all")
 
         # Scaling factors
-        # How:?
         W, H = layout.plot_w, layout.plot_h
         scaling_factor_w = (CANVAS_W - 2 * MARGIN) / W if W > 0 else 1.0
         scaling_factor_y = (CANVAS_H - 2 * MARGIN) / H if H > 0 else 1.0
         s = min(scaling_factor_w, scaling_factor_y)
 
-        # equivalent to pixels
         def get_canvas_coordinate(x: float, y: float) -> tuple[float, float]:
             return (MARGIN + x * s, MARGIN + y * s)
 
-        # Canvas fit
-        x0, y0 = get_canvas_coordinate(0, 0)  # canvas top left
-        x1, y1 = get_canvas_coordinate(W, H)  # canvas bottom right
-        _ = self.canvas.create_rectangle(x0, y0, x1, y1, outline="#333", width=2)
+        # Canvas fit (plot border)
+        x0, y0 = get_canvas_coordinate(0, 0)
+        x1, y1 = get_canvas_coordinate(W, H)
+        self.canvas.create_rectangle(x0, y0, x1, y1, outline="#333", width=2)
 
-        # Corridor fit
-        c = layout.corridor
-        cx0, cy0 = get_canvas_coordinate(c.x, c.y)  # corridor eq.
-        cx1, cy1 = get_canvas_coordinate(c.x + c.width, c.y + c.height)
-        _ = self.canvas.create_rectangle(
-            cx0, cy0, cx1, cy1, fill="#dddddd", outline="#aaaaaa", width=1
-        )
+        # Build corridor list: prefer layout.corridors, fallback to layout.corridor
+        corridors = getattr(layout, "corridors", None)
+        if not corridors:
+            c_single = getattr(layout, "corridor", None)
+            corridors = [c_single] if c_single is not None else []
 
+        # Draw every corridor (so multi-corridor layouts show up)
+        for i, c in enumerate(corridors):
+            cx0, cy0 = get_canvas_coordinate(c.x, c.y)
+            cx1, cy1 = get_canvas_coordinate(c.x + c.width, c.y + c.height)
+            self.canvas.create_rectangle(cx0, cy0, cx1, cy1, fill="#dddddd", outline="#aaaaaa", width=1)
+            # optional small index label
+            self.canvas.create_text((cx0 + cx1) / 2, (cy0 + cy1) / 2, text=f"C{i+1}", font=("Arial", 8), fill="#666")
+
+        # Placed rooms (draw on top)
         palette = [
-            "#8dd3c7",
-            "#ffffb3",
-            "#bebada",
-            "#fb8072",
-            "#80b1d3",
-            "#fdb462",
-            "#b3de69",
-            "#fccde5",
-            "#d9d9d9",
-            "#bc80bd",
-            "#ccebc5",
-            "#ffed6f",
+            "#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3",
+            "#fdb462", "#b3de69", "#fccde5", "#d9d9d9", "#bc80bd",
+            "#ccebc5", "#ffed6f",
         ]
-
-        # Placed room fit with boring af colors
         for idx, placed_room in enumerate(layout.placed):
             rx0, ry0 = get_canvas_coordinate(placed_room.x, placed_room.y)
-            rx1, ry1 = get_canvas_coordinate(
-                placed_room.x + placed_room.width, placed_room.y + placed_room.height
-            )
+            rx1, ry1 = get_canvas_coordinate(placed_room.x + placed_room.width, placed_room.y + placed_room.height)
             color = palette[idx % len(palette)]
-
-            _ = self.canvas.create_rectangle(
-                rx0, ry0, rx1, ry1, fill=color, outline="#333333", width=1
-            )
-
+            self.canvas.create_rectangle(rx0, ry0, rx1, ry1, fill=color, outline="#333333", width=1)
             cx, cy = (rx0 + rx1) / 2, (ry0 + ry1) / 2
+            label = f"{placed_room.name}\n{placed_room.width:.1f}×{placed_room.height:.1f}"
+            self.canvas.create_text(cx, cy, text=label, font=("Arial", 10), fill="#000")
 
-            label = (
-                f"{placed_room.name}\n{placed_room.width:.1f}×{placed_room.height:.1f}"
-            )
-            _ = self.canvas.create_text(
-                cx, cy, text=label, font=("Arial", 10), fill="#000"
-            )
+        # Legend / header: show corridor count and width
+        corridor_count = len(corridors)
+                # Corridor list (already handled in your updated renderer)
+        corridors = getattr(layout, "corridors", None)
+        corridor_count = len(corridors) if corridors else (1 if getattr(layout, "corridor", None) else 0)
 
+        heuristic_name = getattr(layout, "heuristic", "unknown")
         legend = (
-            f"Plot: {W}×{H} | Corridor orientation: {c.orientation} ({c.width if c.orientation==Orientation.VERTICAL else c.height} wide) | "
-            f"Rooms area ≤ 70% of plot area"
+            f"Plot: {W}×{H} | Heuristic: {heuristic_name} | "
+            f"Corridors: {corridor_count} × {CORRIDOR_WIDTH_UNITS} units | "
+            f"Rooms area ≤ {int(AREA_FRACTION_LIMIT*100)}% of plot area"
         )
-        _ = self.canvas.create_text(
-            (x0 + x1) / 2, y0 - 10, text=legend, font=("Arial", 10), fill="#444"
-        )
+
+        self.canvas.create_text((x0 + x1) / 2, y0 - 10, text=legend, font=("Arial", 10), fill="#444")
+
 
     def update_layout(self):
         L: Layout = self.valid_layouts[self.idx]
         self.draw_layout(L)
+
+        # corridor count (handle multi-corridor)
+        corridors = getattr(L, "corridors", None)
+        if corridors:
+            corridor_count = len(corridors)
+        else:
+            corridor_count = 1 if getattr(L, "corridor", None) is not None else 0
 
         cap = AREA_FRACTION_LIMIT * L.plot_w * L.plot_h
         text = (
             f"Layout {self.idx+1}/{len(self.valid_layouts)} | {L.label} | "
             f"Placed: {L.placed_count} rooms | Rooms area: {L.rooms_area:.2f} "
             f"(cap {cap:.2f}) | Unplaced: {len(L.unplaced)} | "
-            f"Corridor width: {CORRIDOR_WIDTH_UNITS}"
+            f"Corridors: {corridor_count} × {CORRIDOR_WIDTH_UNITS}"
         )
 
         self.status_var.set(text)
+
 
     def on_sample(self):
         sample = """\
