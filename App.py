@@ -17,14 +17,12 @@ class App:
             value='Enter plot size and rooms, then click "Generate valid layouts"'
         )
 
-        root.title("this planner is fixed")
+        root.title("Planner")
 
         ctrl = ttk.Frame(root)
         # Multi-corridor controls
         self.use_multi_var = tk.BooleanVar(value=True)
         self.corridor_k_var = tk.StringVar(value="")  # empty = auto
-
-        
 
         ctrl.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
@@ -50,12 +48,10 @@ class App:
         ttk.Button(ctrl, text="Load test sample", command=self.on_sample).grid(
             row=0, column=7, padx=(16, 2)
         )
-                # --- New controls ---
-        # --- Row 1: corridor controls (no overlap) ---
         self.allow_multi_var = tk.BooleanVar(value=True)   # single source of truth
         ttk.Checkbutton(
             ctrl,
-            text="Try multi-corridor",
+            text="Try atmost corridors",
             variable=self.allow_multi_var,
             command=lambda: self.k_spinbox.config(
                 state=("normal" if self.allow_multi_var.get() else "disabled")
@@ -147,16 +143,13 @@ class App:
             self.valid_layouts = [L for L in self.valid_layouts if getattr(L, "heuristic", "") == "single-horizontal"]
 
 
-                # --- Apply user choices ---
 
-        # (a) If multi-corridor is disabled, drop multi layouts
         if not self.allow_multi_var.get():
             self.valid_layouts = [
                 L for L in self.valid_layouts
                 if getattr(L, "heuristic", "") != "multi-vertical"
             ]
 
-        # (b) Apply heuristic filter dropdown
         f = self.heuristic_filter_var.get()
         if f == "Multi-vertical":
             self.valid_layouts = [

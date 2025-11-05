@@ -79,13 +79,6 @@ class PackingHeuristics:
         sort_key: str,
         label_suffix: str,
     ) -> Layout | None:
-        """
-        Place rooms along a vertical corridor x=corridor_x..corridor_x+cw spanning height plot_h.
-        Two stacks: left side (x decreasing from corridor), right side (x increasing from corridor).
-        Stack along y from top (0) downward.
-        """
-        
-
         cw = CORRIDOR_WIDTH_UNITS
         if corridor_x < 0 or corridor_x + cw > plot_w:
             return None
@@ -300,12 +293,11 @@ class PackingHeuristics:
         plot_w: float,
         plot_h: float,
         rooms: list[RoomSpec],
-        desired_k: int | None = None,   # pass None to auto-pick max feasible k
+        desired_k: int | None = None,
     ) -> list[Layout]:
         if plot_w <= 0 or plot_h <= 0:
             return []
 
-        # Select rooms under the global area cap first (70% if AREA_FRACTION_LIMIT=0.7)
         cap = AREA_FRACTION_LIMIT * plot_w * plot_h
         selected, leftover = PackingHeuristics.select_rooms_by_area_greedy(rooms, cap)
         if not selected:
@@ -313,7 +305,6 @@ class PackingHeuristics:
 
         layouts: list[Layout] = []
 
-        # ---- Try multi-corridor vertical layouts first (optional exact k via desired_k) ----
         multi = PackingHeuristics.try_place_multiple_vertical_corridors(
             plot_w=plot_w,
             plot_h=plot_h,
@@ -326,7 +317,6 @@ class PackingHeuristics:
             multi.unplaced = leftover + getattr(multi, "unplaced", [])
             layouts.append(multi)
 
-        # ---- Existing single-corridor heuristics ----
         sorters = [
             ("area_desc", "rooms by area desc"),
             ("along_desc", "by along-corridor size desc"),
@@ -376,12 +366,6 @@ class PackingHeuristics:
         target_area_fraction: float = 0.7,
         desired_k: int | None = None,   # None = auto (try max feasible). Otherwise try this exact k.
     ) -> Layout | None:
-        """
-        Place as many (or exactly desired_k) parallel vertical corridors (width=cw) as possible,
-        while keeping packed room area <= target_area_fraction * plot area.
-        Corridors split the plot into (k+1) vertical slabs; rooms are packed per slab top-down, allowing rotation.
-        Returns the first feasible layout found (max k first if desired_k is None).
-        """
         if plot_w <= 0 or plot_h <= 0:
             return None
 
@@ -390,7 +374,6 @@ class PackingHeuristics:
         if room_area_budget <= 0:
             return None
 
-        # shortest side of any room (used to quickly rule out too-narrow slabs)
         if not rooms:
             return None
         min_short_side = min(min(r.width, r.height) for r in rooms)
