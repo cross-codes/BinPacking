@@ -3,6 +3,10 @@ from struct.Corridor import Corridor, Orientation
 from struct.PlacedRoom import PlacedRoom, Side
 from struct.RoomSpec import RoomSpec
 from constants import *
+import inspect
+print("🔍 Corridor loaded from:", inspect.getfile(Corridor))
+print("Corridor signature:", inspect.signature(Corridor.__init__))
+
 
 
 class PackingHeuristics:
@@ -338,4 +342,95 @@ class PackingHeuristics:
             if sig not in seen:
                 seen.add(sig)
                 unique.append(L)
-        return unique
+        corridor_shapes = [
+            # L-shape
+            [(plot_w * 0.3, 0, 3, plot_h * 0.6), (plot_w * 0.3, plot_h * 0.6, plot_w * 0.4, 3)],
+            # T-shape
+            [(plot_w * 0.5 - 1.5, 0, 3, plot_h * 0.5), (0, plot_h * 0.5 - 1.5, plot_w, 3)],
+            # Plus-shape
+            [(plot_w * 0.5 - 1.5, 0, 3, plot_h), (0, plot_h * 0.5 - 1.5, plot_w, 3)],
+        ]
+
+        for shape in corridor_shapes:
+            print(f"Trying rectilinear corridor with shape: {shape}")
+
+            lay = PackingHeuristics.try_place_rectilinear(plot_w, plot_h, selected, shape, "area_desc", "rectilinear")
+            if lay and lay.placed:
+                layouts.append(lay)
+
+        return layouts + unique
+    @staticmethod
+    def try_place_rectilinear(plot_w, plot_h, rooms, corridor_segments, sort_key, label_suffix):
+        """
+        Pure-Python version: Place rooms around a rectilinear corridor made of multiple
+        rectangular segments (no shapely dependency).
+        """
+        # Create corridor object with segments
+        corridor = Corridor(x=0, y=0, width=0, height=0, orientation=Orientation.VERTICAL)
+        corridor.segments = corridor_segments
+
+        # Determine occupied zones
+        occupied = []
+        for (x, y, w, h) in corridor_segments:
+            occupied.append((x, y, x + w, y + h))
+
+        placed, unplaced = [], []
+
+        # Sort rooms
+        if sort_key == "area_desc":
+            ordered = sorted(rooms, key=lambda r: r.width * r.height, reverse=True)
+        else:
+            ordered = rooms[:]
+
+        # Simple helper: check if rectangle overlaps any in a list
+        def overlaps(x, y, w, h, others):
+            for (ox, oy, ox2, oy2) in others:
+                if not (x + w <= ox or x >= ox2 or y + h <= oy or y >= oy2):
+                    return True
+            return False
+
+        # Try to fill rooms greedily around the corridor
+        grid_step = 0.5  # resolution for placement scan
+        for r in ordered:
+            placed_flag = False
+            for y in range(0, int(plot_h - r.height) + 1):
+                for x in range(0, int(plot_w - r.width) + 1):
+                    # skip corridor overlaps
+                    if overlaps(x, y, r.width, r.height, occupied):
+                        continue
+                    # check if within plot and not overlapping placed rooms
+                    if overlaps(x, y, r.width, r.height, [(p.x, p.y, p.x + p.width, p.y + p.height) for p in placed]):
+                        continue
+                    placed.append(
+                        PlacedRoom(
+                            name=r.name,
+                            width=r.width,
+                            height=r.height,
+                            x=x,
+                            y=y,
+                            rotated=False,
+                            side=Side.LEFT
+                        )
+                    )
+                    occupied.append((x, y, x + r.width, y + r.height))
+                    placed_flag = True
+                    break
+                if placed_flag:
+                    break
+            if not placed_flag:
+                unplaced.append(r)
+
+        rooms_area = sum(p.width * p.height for p in placed)
+        layout = Layout(
+            placed=placed,
+            corridor=corridor,
+            plot_w=plot_w,
+            plot_h=plot_h,
+            rooms_area=rooms_area,
+            placed_count=len(placed),
+            label=f"Rectilinear ({label_suffix})",
+            unplaced=unplaced,
+        )
+        return layout
+
+

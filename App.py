@@ -136,11 +136,17 @@ class App:
 
         # Corridor fit
         c = layout.corridor
-        cx0, cy0 = get_canvas_coordinate(c.x, c.y)  # corridor eq.
-        cx1, cy1 = get_canvas_coordinate(c.x + c.width, c.y + c.height)
-        _ = self.canvas.create_rectangle(
-            cx0, cy0, cx1, cy1, fill="#dddddd", outline="#aaaaaa", width=1
-        )
+        if hasattr(c, "segments") and c.segments:
+            for (sx, sy, sw, sh) in c.segments:
+                cx0, cy0 = get_canvas_coordinate(sx, sy)
+                cx1, cy1 = get_canvas_coordinate(sx + sw, sy + sh)
+                self.canvas.create_rectangle(cx0, cy0, cx1, cy1, fill="#dddddd", outline="#aaaaaa", width=1)
+        else:
+            # backward-compatible
+            cx0, cy0 = get_canvas_coordinate(c.x, c.y)
+            cx1, cy1 = get_canvas_coordinate(c.x + c.width, c.y + c.height)
+            self.canvas.create_rectangle(cx0, cy0, cx1, cy1, fill="#dddddd", outline="#aaaaaa", width=1)
+
 
         palette = [
             "#8dd3c7",
@@ -177,11 +183,13 @@ class App:
             _ = self.canvas.create_text(
                 cx, cy, text=label, font=("Arial", 10), fill="#000"
             )
-
-        legend = (
-            f"Plot: {W}×{H} | Corridor orientation: {c.orientation} ({c.width if c.orientation==Orientation.VERTICAL else c.height} wide) | "
-            f"Rooms area ≤ 70% of plot area"
-        )
+        if hasattr(c, "segments") and c.segments:
+            legend = f"Plot: {W}×{H} | Rectilinear corridor ({len(c.segments)} segments) | Rooms area ≤ 70% of plot area"
+        else:
+            legend = (
+                f"Plot: {W}×{H} | Corridor orientation: {c.orientation} ({c.width if c.orientation==Orientation.VERTICAL else c.height} wide) | "
+                f"Rooms area ≤ 70% of plot area"
+            )
         _ = self.canvas.create_text(
             (x0 + x1) / 2, y0 - 10, text=legend, font=("Arial", 10), fill="#444"
         )
