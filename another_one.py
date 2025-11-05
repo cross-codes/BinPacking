@@ -43,6 +43,7 @@ class Layout:
         self.corridor = corridor
         self.placed_count = len(placed)
         self.entrance_pos: Optional[Tuple[float, float]] = None
+        self.free_boundary_segments: Optional[Dict[str, List[Tuple[float, float]]]] = None
 
 # --- Abstract Base Class for Algorithms ---
 class LayoutAlgorithm:
@@ -165,6 +166,7 @@ class BoundaryPackerAlgorithm(LayoutAlgorithm):
 
     def _find_and_set_entrance(self, layout: Layout):
         bounds = self._get_free_boundary_segments(layout.placed)
+        layout.free_boundary_segments = bounds # Store segments for drawing
         candidates = [(edge, seg) for edge, segs in bounds.items() for seg in segs if seg[1] - seg[0] > 1.0]
         if not candidates: return
         edge, (start, end) = max(candidates, key=lambda item: item[1][1] - item[1][0])
@@ -347,10 +349,11 @@ class App:
             self.info.config(text="No valid layouts."); self.status.config(text="Try a larger plot or different algorithm.", foreground="red"); return
 
         layout = self.layouts[self.idx]
-        pad, W, H = 20, layout.plot_w, layout.plot_h
+        pad = 60 # Increased padding to make space for total dimension lines
+        W, H = layout.plot_w, layout.plot_h
         cw, ch = self.canvas.winfo_width() or 800, self.canvas.winfo_height() or 600
         scale = min((cw - 2*pad) / W, (ch - 2*pad) / H) if W*H>0 else 1
-        ox, oy = pad, pad
+        ox, oy = (cw - W*scale)/2, (ch - H*scale)/2
 
         if layout.corridor:
             c = layout.corridor
@@ -365,6 +368,10 @@ class App:
             self.canvas.create_text((x1+x2)/2, (y1+y2)/2, text=f"{name_tag}\n{r.w:.1f}x{r.h:.1f}", fill="white", font=("Arial",9))
         
         self.canvas.create_rectangle(ox, oy, ox+W*scale, oy+H*scale, width=2, outline="#333")
+
+        # For Boundary Packer, draw dimension lines
+        if not layout.corridor:
+            self._draw_dimension_lines(layout, scale, ox, oy)
             
         if layout.entrance_pos:
             ex, ey = ox + layout.entrance_pos[0]*scale, oy + layout.entrance_pos[1]*scale
@@ -376,6 +383,82 @@ class App:
         status_text = "All rooms placed." if not layout.unplaced_names else f"Unplaced: {', '.join(layout.unplaced_names)}"
         self.status.config(text=status_text, foreground="green" if not layout.unplaced_names else "red")
         
+    def _draw_dimension_lines(self, layout, scale, ox, oy):
+        W, H = layout.plot_w, layout.plot_h
+        font_size = 8
+        offset = 15 
+        tick_size = 3
+        min_len_to_show = 0.5 
+        line_color = "#555555"
+        text_padding = 3
+
+        # Mark Origin (0,0)
+        self.canvas.create_line(ox-5, oy-5, ox+5, oy+5, fill="red", width=1.5)
+        self.canvas.create_line(ox-5, oy+5, ox+5, oy-5, fill="red", width=1.5)
+        self.canvas.create_text(ox - 8, oy - 8, text="(0,0)", font=("Arial", font_size), fill="red", anchor=tk.SE)
+
+        segs = layout.free_boundary_segments
+        if segs:
+            for start, end in segs.get('top', []):
+                length = end - start
+                if length > min_len_to_show:
+                    x1, x2 = ox + start * scale, ox + end * scale
+                    y_pos = oy - offset
+                    self.canvas.create_line(x1, y_pos - tick_size, x1, y_pos + tick_size, fill=line_color)
+                    self.canvas.create_line(x2, y_pos - tick_size, x2, y_pos + tick_size, fill=line_color)
+                    self.canvas.create_line(x1, y_pos, x2, y_pos, fill=line_color)
+                    self.canvas.create_text((x1+x2)/2, y_pos - text_padding, text=f"{length:.1f}", font=("Arial", font_size), fill=line_color, anchor=tk.S)
+
+            for start, end in segs.get('bottom', []):
+                length = end - start
+                if length > min_len_to_show:
+                    x1, x2 = ox + start * scale, ox + end * scale
+                    y_pos = oy + H * scale + offset
+                    self.canvas.create_line(x1, y_pos - tick_size, x1, y_pos + tick_size, fill=line_color)
+                    self.canvas.create_line(x2, y_pos - tick_size, x2, y_pos + tick_size, fill=line_color)
+                    self.canvas.create_line(x1, y_pos, x2, y_pos, fill=line_color)
+                    self.canvas.create_text((x1+x2)/2, y_pos + text_padding, text=f"{length:.1f}", font=("Arial", font_size), fill=line_color, anchor=tk.N)
+
+            for start, end in segs.get('left', []):
+                length = end - start
+                if length > min_len_to_show:
+                    y1, y2 = oy + start * scale, oy + end * scale
+                    x_pos = ox - offset
+                    self.canvas.create_line(x_pos - tick_size, y1, x_pos + tick_size, y1, fill=line_color)
+                    self.canvas.create_line(x_pos - tick_size, y2, x_pos + tick_size, y2, fill=line_color)
+                    self.canvas.create_line(x_pos, y1, x_pos, y2, fill=line_color)
+                    self.canvas.create_text(x_pos - text_padding, (y1+y2)/2, text=f"{length:.1f}", font=("Arial", font_size), fill=line_color, anchor=tk.E)
+
+            for start, end in segs.get('right', []):
+                length = end - start
+                if length > min_len_to_show:
+                    y1, y2 = oy + start * scale, oy + end * scale
+                    x_pos = ox + W * scale + offset
+                    self.canvas.create_line(x_pos - tick_size, y1, x_pos + tick_size, y1, fill=line_color)
+                    self.canvas.create_line(x_pos - tick_size, y2, x_pos + tick_size, y2, fill=line_color)
+                    self.canvas.create_line(x_pos, y1, x_pos, y2, fill=line_color)
+                    self.canvas.create_text(x_pos + text_padding, (y1+y2)/2, text=f"{length:.1f}", font=("Arial", font_size), fill=line_color, anchor=tk.W)
+
+        # Draw total W and H dimension lines
+        total_dim_offset = offset + 27 # Increased this value for more separation
+        total_line_color = "#00008B" # Dark Blue
+
+        # Total Width (W)
+        x1, x2 = ox, ox + W * scale
+        y_pos = oy - total_dim_offset
+        self.canvas.create_line(x1, y_pos - tick_size, x1, y_pos + tick_size, fill=total_line_color)
+        self.canvas.create_line(x2, y_pos - tick_size, x2, y_pos + tick_size, fill=total_line_color)
+        self.canvas.create_line(x1, y_pos, x2, y_pos, fill=total_line_color)
+        self.canvas.create_text((x1+x2)/2, y_pos - text_padding, text=f"W = {W:.1f}", font=("Arial", font_size, "bold"), fill=total_line_color, anchor=tk.S)
+
+        # Total Height (H)
+        y1, y2 = oy, oy + H * scale
+        x_pos = ox - total_dim_offset
+        self.canvas.create_line(x_pos - tick_size, y1, x_pos + tick_size, y1, fill=total_line_color)
+        self.canvas.create_line(x_pos - tick_size, y2, x_pos + tick_size, y2, fill=total_line_color)
+        self.canvas.create_line(x_pos, y1, x_pos, y2, fill=total_line_color)
+        self.canvas.create_text(x_pos - text_padding, (y1+y2)/2, text=f"H = {H:.1f}", font=("Arial", font_size, "bold"), fill=total_line_color, anchor=tk.E)
+
     def parse_rooms(self) -> List[RoomSpec]:
         rooms = []
         for line in self.text.get("1.0", tk.END).strip().splitlines():
