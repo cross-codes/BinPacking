@@ -105,7 +105,7 @@ def astar(start, goal, grid):
     def h(a,b): return abs(a[0]-b[0]) + abs(a[1]-b[1])
     def neighbors(c):
         x,y = c
-        for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)):
+        for dx,dy in ((1,0),(-1,0),(0,1),(-1,0)):
             nx,ny = x+dx,y+dy
             if 0<=nx<cols and 0<=ny<rows and not grid[ny][nx]:
                 yield (nx,ny)
@@ -138,7 +138,7 @@ def cells_to_rects(cells: Set[Tuple[int,int]], res: float) -> List[CorridorRect]
             if c not in todo: continue
             todo.remove(c); comp.add(c)
             x,y = c
-            for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)):
+            for dx,dy in ((1,0),(-1,0),(0,1),(-1,0)):
                 nb=(x+dx,y+dy)
                 if nb in todo: stack.append(nb)
         xs=[c[0] for c in comp]; ys=[c[1] for c in comp]
@@ -294,7 +294,7 @@ class BoundaryBacktracker:
                 c = q.pop(0); x,y = c
                 if 0<=x<cols and 0<=y<rows and not occ[y][x]:
                     found=c; break
-                for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)):
+                for dx,dy in ((1,0),(-1,0),(0,1),(-1,0)):
                     nb=(x+dx,y+dy)
                     if nb not in seen and 0<=nb[0]<cols and 0<=nb[1]<rows:
                         seen.add(nb); q.append(nb)
@@ -378,6 +378,9 @@ class App:
         self.corridor_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(top, text="Show corridors", variable=self.corridor_var, command=lambda: self.redraw()).pack(side=tk.LEFT, padx=8)
 
+        self.entrance_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(top, text="Mark entrance", variable=self.entrance_var, command=lambda: self.redraw()).pack(side=tk.LEFT, padx=8)
+
         ttk.Button(top, text="Generate", command=self.generate).pack(side=tk.LEFT, padx=6)
         ttk.Button(top, text="Load sample", command=self.load_sample).pack(side=tk.LEFT)
 
@@ -459,25 +462,95 @@ class App:
         scale = min((cw-2*pad)/W, (ch-2*pad)/H) if W>0 and H>0 else 1.0
         ox, oy = pad, pad
 
-        if self.boundary_var.get():
-            self.canvas.create_rectangle(ox, oy, ox+W*scale, oy+H*scale, width=2, outline="#222222")
-
+        # Draw gray background to represent common corridor space
         if self.corridor_var.get():
-            for c in L.corridors:
-                x1=ox+c.x*scale; y1=oy+c.y*scale
-                x2=x1+c.w*scale; y2=y1+c.h*scale
-                self.canvas.create_rectangle(x1,y1,x2,y2, fill="#d0d0d0", outline="#888888")
+            self.canvas.create_rectangle(ox, oy, ox+W*scale, oy+H*scale, fill="#d0d0d0", outline="")
 
+        # Draw rooms
         for pr in L.placed:
             x1=ox+pr.x*scale; y1=oy+pr.y*scale
             x2=x1+pr.w*scale; y2=y1+pr.h*scale
             self.canvas.create_rectangle(x1,y1,x2,y2, fill="#4ea3ff", outline="#003366", width=1)
             cx=(x1+x2)/2; cy=(y1+y2)/2
             self.canvas.create_text(cx, cy, text=f"{pr.name}\n{pr.w:.1f}x{pr.h:.1f}", font=("Arial", 9), fill="white")
+        
+        # Draw plot boundary
+        if self.boundary_var.get():
+            self.canvas.create_rectangle(ox, oy, ox+W*scale, oy+H*scale, width=2, outline="#222222")
+
+        # Mark an entrance/exit
+        if self.entrance_var.get():
+            self.mark_entrance(L, ox, oy, scale)
 
         self.info.config(text=f"Layout {self.idx+1}/{len(self.layouts)} — rooms {L.placed_count}, area {L.rooms_area:.1f}")
+
+    def mark_entrance(self, L: Layout, ox: float, oy: float, scale: float):
+        W, H = L.plot_w, L.plot_h
+
+        def update_free_intervals(free_intervals, occupied_interval):
+            next_free = []
+            occ_s, occ_e = occupied_interval
+            for free_s, free_e in free_intervals:
+                if free_e < occ_s + EPS or free_s > occ_e - EPS:
+                    next_free.append((free_s, free_e))
+                    continue
+                if free_s < occ_s - EPS:
+                    next_free.append((free_s, occ_s))
+                if free_e > occ_e + EPS:
+                    next_free.append((occ_e, free_e))
+            return next_free
+
+        top_free = [(0, W)]; bottom_free = [(0, W)]
+        left_free = [(0, H)]; right_free = [(0, H)]
+
+        for pr in L.placed:
+            if abs(pr.y) < EPS:
+                top_free = update_free_intervals(top_free, (pr.x, pr.x + pr.w))
+            if abs(pr.y + pr.h - H) < EPS:
+                bottom_free = update_free_intervals(bottom_free, (pr.x, pr.x + pr.w))
+            if abs(pr.x) < EPS:
+                left_free = update_free_intervals(left_free, (pr.y, pr.y + pr.h))
+            if abs(pr.x + pr.w - W) < EPS:
+                right_free = update_free_intervals(right_free, (pr.y, pr.y + pr.h))
+
+        possible_entrances = []
+        min_opening = 1.0 # Minimum size for an entrance in plot units
+        for start, end in top_free:
+            if end - start > min_opening: possible_entrances.append(('top', start, end))
+        for start, end in bottom_free:
+            if end - start > min_opening: possible_entrances.append(('bottom', start, end))
+        for start, end in left_free:
+            if end - start > min_opening: possible_entrances.append(('left', start, end))
+        for start, end in right_free:
+            if end - start > min_opening: possible_entrances.append(('right', start, end))
+        
+        if not possible_entrances: return
+        
+        rng = random.Random(self.idx) # Seeded for deterministic choice
+        edge, start, end = rng.choice(possible_entrances)
+        
+        mid = (start + end) / 2
+        marker_len = min(end - start, 2.0) * 0.8 # Size of entrance marker in plot units
+
+        if edge == 'top':
+            x1, y1 = ox + (mid - marker_len/2)*scale, oy
+            x2, y2 = ox + (mid + marker_len/2)*scale, oy
+            self.canvas.create_line(x1, y1, x2, y2, fill="red", width=5)
+        elif edge == 'bottom':
+            x1, y1 = ox + (mid - marker_len/2)*scale, oy + H*scale
+            x2, y2 = ox + (mid + marker_len/2)*scale, oy + H*scale
+            self.canvas.create_line(x1, y1, x2, y2, fill="red", width=5)
+        elif edge == 'left':
+            x1, y1 = ox, oy + (mid - marker_len/2)*scale
+            x2, y2 = ox, oy + (mid + marker_len/2)*scale
+            self.canvas.create_line(x1, y1, x2, y2, fill="red", width=5)
+        elif edge == 'right':
+            x1, y1 = ox + W*scale, oy + (mid - marker_len/2)*scale
+            x2, y2 = ox + W*scale, oy + (mid + marker_len/2)*scale
+            self.canvas.create_line(x1, y1, x2, y2, fill="red", width=5)
 
 if __name__ == "__main__":
     root = tk.Tk()
     app = App(root)
     root.mainloop()
+
