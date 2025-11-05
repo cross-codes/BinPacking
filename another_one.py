@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Boundary-hugging backtracking layouts (NO OVERLAP) + optional routed corridors.
+This version uses a fully randomized room order to generate more varied layouts.
 Tkinter-only, single file. Run:
 
     python3 single_layout_app_boundary_bt.py
@@ -18,7 +19,7 @@ from typing import List, Tuple, Set
 GRID_RESOLUTION = 1.0        # grid for routing
 MAX_LAYOUTS = 50
 BT_NODE_LIMIT = 250_000
-RANDOM_PERM_TRIES = 80
+RANDOM_PERM_TRIES = 500 # Increased tries for better variety
 SEED = 24680
 
 # Collision/geometry tolerances
@@ -146,14 +147,15 @@ def cells_to_rects(cells: Set[Tuple[int,int]], res: float) -> List[CorridorRect]
         rects.append(CorridorRect(minx*res, miny*res, (maxx-minx+1)*res, (maxy-miny+1)*res))
     return rects
 
-# -------- Boundary-hugging backtracker (with no-overlap check) --------
+# -------- UPDATED Boundary-hugging backtracker --------
 class BoundaryBacktracker:
     """
-    Each room must touch an outer edge. We maintain offsets per edge and
-    **also** reject any placement that overlaps previously placed rooms.
+    Places rooms by trying all valid boundary-touching positions for each room.
+    This version uses a fully randomized room order to generate more varied layouts.
     """
     def __init__(self, plot_w: float, plot_h: float, rooms: List[RoomSpec]):
-        self.W = plot_w; self.H = plot_h
+        self.W = plot_w
+        self.H = plot_h
         self.rooms = rooms
         self.rng = random.Random(SEED)
 
@@ -163,117 +165,117 @@ class BoundaryBacktracker:
         node_count = 0
 
         def signature(placed: List[PlacedRoom]):
-            return tuple(sorted((p.name, round(p.x,2), round(p.y,2), round(p.w,2), round(p.h,2), p.edge) for p in placed))
+            return tuple(sorted((p.name, round(p.x, 2), round(p.y, 2), round(p.w, 2), round(p.h, 2)) for p in placed))
 
         def fits(candidate: PlacedRoom, placed: List[PlacedRoom]) -> bool:
-            # In-bounds
             if candidate.x < -EPS or candidate.y < -EPS: return False
             if candidate.x + candidate.w > self.W + EPS: return False
             if candidate.y + candidate.h > self.H + EPS: return False
-            # touches boundary
+            
             touches = (
-                abs(candidate.y - 0.0) <= max(EPS, EDGE_GAP) or
-                abs(candidate.x - 0.0) <= max(EPS, EDGE_GAP) or
+                abs(candidate.y) <= max(EPS, EDGE_GAP) or
+                abs(candidate.x) <= max(EPS, EDGE_GAP) or
                 abs(candidate.x + candidate.w - self.W) <= max(EPS, EDGE_GAP) or
                 abs(candidate.y + candidate.h - self.H) <= max(EPS, EDGE_GAP)
             )
             if not touches: return False
-            # no overlap
+            
             return not collides_any(candidate, placed)
 
-        # backtracking over edges + rotation, respecting per-edge running offsets
-        def backtrack(i: int, top_off: float, right_off: float, bottom_off: float, left_off: float, placed: List[PlacedRoom]):
+        def backtrack(i: int, placed: List[PlacedRoom]):
             nonlocal node_count
             if len(layouts) >= want: return
             if node_count > BT_NODE_LIMIT: return
             node_count += 1
 
             if i == len(order):
-                sig = signature(placed)
+                final_placed = []
+                for p in placed:
+                    edge = 'unknown'
+                    if abs(p.y) < EPS: edge = 'top'
+                    elif abs(p.y + p.h - self.H) < EPS: edge = 'bottom'
+                    elif abs(p.x) < EPS: edge = 'left'
+                    elif abs(p.x + p.w - self.W) < EPS: edge = 'right'
+                    final_placed.append(PlacedRoom(p.name, p.x, p.y, p.w, p.h, edge, p.rotated))
+                
+                sig = signature(final_placed)
                 if sig in seen: return
                 seen.add(sig)
-                corridors = self.route_corridors(placed)  # optional
-                layouts.append(Layout(list(placed), self.W, self.H, corridors))
+                
+                layouts.append(Layout(list(final_placed), self.W, self.H, [])) # Corridors can be slow, compute later
                 return
 
             r = order[i]
-            edges = ['top', 'right', 'bottom', 'left']
-            self.rng.shuffle(edges)  # add variety
+            
+            all_candidates = []
+            for rotated in (False, True):
+                w, h = (r.w, r.h) if not rotated else (r.h, r.w)
 
-            for edge in edges:
-                for rotated in (False, True):
-                    w = r.w if not rotated else r.h
-                    h = r.h if not rotated else r.w
+                test_xs = {0.0, self.W - w}
+                test_ys = {0.0, self.H - h}
 
-                    if edge == 'top':
-                        x = top_off; y = 0.0
-                        cand = PlacedRoom(r.name, x, y, w, h, 'top', rotated)
-                        if x + w <= self.W + EPS and fits(cand, placed):
-                            placed.append(cand)
-                            backtrack(i+1, top_off + w, right_off, bottom_off, left_off, placed)
-                            placed.pop()
+                for pr in placed:
+                    test_xs.add(pr.x + pr.w + ROOM_GAP)
+                    test_xs.add(pr.x - w - ROOM_GAP)
+                    test_ys.add(pr.y + pr.h + ROOM_GAP)
+                    test_ys.add(pr.y - h - ROOM_GAP)
 
-                    elif edge == 'bottom':
-                        x = bottom_off; y = self.H - h
-                        cand = PlacedRoom(r.name, x, y, w, h, 'bottom', rotated)
-                        if x + w <= self.W + EPS and fits(cand, placed):
-                            placed.append(cand)
-                            backtrack(i+1, top_off, right_off, bottom_off + w, left_off, placed)
-                            placed.pop()
+                for x in test_xs:
+                    all_candidates.append(PlacedRoom(r.name, x, 0.0, w, h, 'top', rotated))
+                    all_candidates.append(PlacedRoom(r.name, x, self.H - h, w, h, 'bottom', rotated))
+                for y in test_ys:
+                    all_candidates.append(PlacedRoom(r.name, 0.0, y, w, h, 'left', rotated))
+                    all_candidates.append(PlacedRoom(r.name, self.W - w, y, w, h, 'right', rotated))
+            
+            self.rng.shuffle(all_candidates)
+            
+            tested_positions = set()
+            for cand in all_candidates:
+                pos_sig = (round(cand.x, 2), round(cand.y, 2), round(cand.w, 2), round(cand.h, 2))
+                if pos_sig in tested_positions: continue
+                tested_positions.add(pos_sig)
 
-                    elif edge == 'right':
-                        x = self.W - w; y = right_off
-                        cand = PlacedRoom(r.name, x, y, w, h, 'right', rotated)
-                        if y + h <= self.H + EPS and fits(cand, placed):
-                            placed.append(cand)
-                            backtrack(i+1, top_off, right_off + h, bottom_off, left_off, placed)
-                            placed.pop()
+                if fits(cand, placed):
+                    placed.append(cand)
+                    backtrack(i + 1, placed)
+                    placed.pop()
+                    if len(layouts) >= want: return
 
-                    else:  # left
-                        x = 0.0; y = left_off
-                        cand = PlacedRoom(r.name, x, y, w, h, 'left', rotated)
-                        if y + h <= self.H + EPS and fits(cand, placed):
-                            placed.append(cand)
-                            backtrack(i+1, top_off, right_off, bottom_off, left_off + h, placed)
-                            placed.pop()
-
-        backtrack(0, 0.0, 0.0, 0.0, 0.0, [])
+        backtrack(0, [])
         return layouts
 
     def generate(self, count: int) -> List[Layout]:
         layouts: List[Layout] = []
         seen_sigs = set()
-
+        
         def add_unique(ls: List[Layout]):
+            nonlocal layouts, seen_sigs
+            initial_count = len(layouts)
             for L in ls:
-                sig = tuple(sorted((p.name, round(p.x,2), round(p.y,2), round(p.w,2), round(p.h,2), p.edge) for p in L.placed))
+                sig = tuple(sorted((p.name, round(p.x,2), round(p.y,2), round(p.w,2), round(p.h,2)) for p in L.placed))
                 if sig not in seen_sigs:
                     seen_sigs.add(sig)
                     layouts.append(L)
                     if len(layouts) >= count:
                         return True
-            return False
-
-        # heuristic orders
-        orders = []
-        orders.append(list(self.rooms))
-        orders.append(sorted(self.rooms, key=lambda r: r.w*r.h, reverse=True))
-        orders.append(sorted(self.rooms, key=lambda r: max(r.w, r.h), reverse=True))
-        orders.append(sorted(self.rooms, key=lambda r: (r.w, r.h), reverse=True))
-        orders.append(sorted(self.rooms, key=lambda r: r.w*r.h))  # asc
-        for order in orders:
-            batch = self.try_place_all(order, count - len(layouts))
-            if add_unique(batch): return layouts
-
-        # random orders
-        rng = random.Random(SEED)
+            return len(layouts) > initial_count
+            
+        # --- KEY CHANGE: Use fully randomized ordering ---
+        master_rng = random.Random(SEED)
+        base_rooms = list(self.rooms)
         tries = 0
         while len(layouts) < count and tries < RANDOM_PERM_TRIES:
             tries += 1
-            order = self.rooms[:]
-            rng.shuffle(order)
-            batch = self.try_place_all(order, count - len(layouts))
-            if add_unique(batch): break
+            master_rng.shuffle(base_rooms)
+            order = list(base_rooms)
+
+            # Try to find one new layout with this order
+            batch = self.try_place_all(order, 1)
+            add_unique(batch)
+
+        # Post-process to add corridors if enabled
+        for l in layouts:
+            l.corridors = self.route_corridors(l.placed)
 
         return layouts[:count]
 
@@ -288,7 +290,6 @@ class BoundaryBacktracker:
         for pr in placed:
             ax, ay = access_point_for_room_boundary(pr)
             start = point_to_cell(ax, ay, res)
-            # nearest free cell
             q=[start]; seen=set(q); found=None
             while q and found is None:
                 c = q.pop(0); x,y = c
@@ -302,7 +303,6 @@ class BoundaryBacktracker:
                 found=(min(max(0,start[0]),cols-1), min(max(0,start[1]),rows-1))
             access.append(found)
 
-        # MST in grid coords (Manhattan)
         def prim(points):
             n=len(points)
             if n<=1: return []
@@ -339,6 +339,7 @@ class BoundaryBacktracker:
         for p in paths:
             for c in p: cells.add(c)
         return cells_to_rects(cells, res)
+
 
 # -------- UI --------
 SAMPLE = """R1 6 5
@@ -423,6 +424,8 @@ class App:
         return out
 
     def generate(self):
+        self.status.config(text="Generating...")
+        self.root.update_idletasks()
         try:
             W = float(self.w_var.get()); H = float(self.h_var.get())
         except Exception as e:
@@ -438,6 +441,7 @@ class App:
         if not self.layouts:
             self.status.config(text="No layouts found (try larger plot or fewer/lower rooms)")
             self.canvas.delete("all")
+            self.info.config(text="No layouts yet")
             return
         self.status.config(text=f"Generated {len(self.layouts)} layouts")
         self.redraw()
@@ -461,12 +465,15 @@ class App:
         ch = self.canvas.winfo_height() or CANVAS_H
         scale = min((cw-2*pad)/W, (ch-2*pad)/H) if W>0 and H>0 else 1.0
         ox, oy = pad, pad
-
-        # Draw gray background to represent common corridor space
+        
         if self.corridor_var.get():
             self.canvas.create_rectangle(ox, oy, ox+W*scale, oy+H*scale, fill="#d0d0d0", outline="")
+            for crect in L.corridors:
+                x1=ox+crect.x*scale; y1=oy+crect.y*scale
+                x2=x1+crect.w*scale; y2=y1+crect.h*scale
+                self.canvas.create_rectangle(x1,y1,x2,y2, fill="gray", outline="")
 
-        # Draw rooms
+
         for pr in L.placed:
             x1=ox+pr.x*scale; y1=oy+pr.y*scale
             x2=x1+pr.w*scale; y2=y1+pr.h*scale
@@ -474,11 +481,9 @@ class App:
             cx=(x1+x2)/2; cy=(y1+y2)/2
             self.canvas.create_text(cx, cy, text=f"{pr.name}\n{pr.w:.1f}x{pr.h:.1f}", font=("Arial", 9), fill="white")
         
-        # Draw plot boundary
         if self.boundary_var.get():
             self.canvas.create_rectangle(ox, oy, ox+W*scale, oy+H*scale, width=2, outline="#222222")
 
-        # Mark an entrance/exit
         if self.entrance_var.get():
             self.mark_entrance(L, ox, oy, scale)
 
@@ -486,71 +491,53 @@ class App:
 
     def mark_entrance(self, L: Layout, ox: float, oy: float, scale: float):
         W, H = L.plot_w, L.plot_h
-
+        
         def update_free_intervals(free_intervals, occupied_interval):
             next_free = []
             occ_s, occ_e = occupied_interval
             for free_s, free_e in free_intervals:
                 if free_e < occ_s + EPS or free_s > occ_e - EPS:
-                    next_free.append((free_s, free_e))
-                    continue
-                if free_s < occ_s - EPS:
-                    next_free.append((free_s, occ_s))
-                if free_e > occ_e + EPS:
-                    next_free.append((occ_e, free_e))
+                    next_free.append((free_s, free_e)); continue
+                if free_s < occ_s - EPS: next_free.append((free_s, occ_s))
+                if free_e > occ_e + EPS: next_free.append((occ_e, free_e))
             return next_free
 
-        top_free = [(0, W)]; bottom_free = [(0, W)]
-        left_free = [(0, H)]; right_free = [(0, H)]
+        top_free, bottom_free, left_free, right_free = [(0, W)], [(0, W)], [(0, H)], [(0, H)]
 
         for pr in L.placed:
-            if abs(pr.y) < EPS:
-                top_free = update_free_intervals(top_free, (pr.x, pr.x + pr.w))
-            if abs(pr.y + pr.h - H) < EPS:
-                bottom_free = update_free_intervals(bottom_free, (pr.x, pr.x + pr.w))
-            if abs(pr.x) < EPS:
-                left_free = update_free_intervals(left_free, (pr.y, pr.y + pr.h))
-            if abs(pr.x + pr.w - W) < EPS:
-                right_free = update_free_intervals(right_free, (pr.y, pr.y + pr.h))
+            if abs(pr.y) < EPS: top_free = update_free_intervals(top_free, (pr.x, pr.x + pr.w))
+            if abs(pr.y + pr.h - H) < EPS: bottom_free = update_free_intervals(bottom_free, (pr.x, pr.x + pr.w))
+            if abs(pr.x) < EPS: left_free = update_free_intervals(left_free, (pr.y, pr.y + pr.h))
+            if abs(pr.x + pr.w - W) < EPS: right_free = update_free_intervals(right_free, (pr.y, pr.y + pr.h))
 
         possible_entrances = []
-        min_opening = 1.0 # Minimum size for an entrance in plot units
-        for start, end in top_free:
-            if end - start > min_opening: possible_entrances.append(('top', start, end))
-        for start, end in bottom_free:
-            if end - start > min_opening: possible_entrances.append(('bottom', start, end))
-        for start, end in left_free:
-            if end - start > min_opening: possible_entrances.append(('left', start, end))
-        for start, end in right_free:
-            if end - start > min_opening: possible_entrances.append(('right', start, end))
+        min_opening = 1.0
+        for s, e in top_free:
+            if e - s > min_opening: possible_entrances.append(('top', s, e))
+        for s, e in bottom_free:
+            if e - s > min_opening: possible_entrances.append(('bottom', s, e))
+        for s, e in left_free:
+            if e - s > min_opening: possible_entrances.append(('left', s, e))
+        for s, e in right_free:
+            if e - s > min_opening: possible_entrances.append(('right', s, e))
         
         if not possible_entrances: return
         
-        rng = random.Random(self.idx) # Seeded for deterministic choice
-        edge, start, end = rng.choice(possible_entrances)
-        
+        rng = random.Random(self.idx); edge, start, end = rng.choice(possible_entrances)
         mid = (start + end) / 2
-        marker_len = min(end - start, 2.0) * 0.8 # Size of entrance marker in plot units
-
+        marker_len = min(end - start, 2.0) * 0.8
+        
         if edge == 'top':
-            x1, y1 = ox + (mid - marker_len/2)*scale, oy
-            x2, y2 = ox + (mid + marker_len/2)*scale, oy
-            self.canvas.create_line(x1, y1, x2, y2, fill="red", width=5)
+            x1, y1, x2, y2 = ox+(mid-marker_len/2)*scale, oy, ox+(mid+marker_len/2)*scale, oy
         elif edge == 'bottom':
-            x1, y1 = ox + (mid - marker_len/2)*scale, oy + H*scale
-            x2, y2 = ox + (mid + marker_len/2)*scale, oy + H*scale
-            self.canvas.create_line(x1, y1, x2, y2, fill="red", width=5)
+            x1, y1, x2, y2 = ox+(mid-marker_len/2)*scale, oy+H*scale, ox+(mid+marker_len/2)*scale, oy+H*scale
         elif edge == 'left':
-            x1, y1 = ox, oy + (mid - marker_len/2)*scale
-            x2, y2 = ox, oy + (mid + marker_len/2)*scale
-            self.canvas.create_line(x1, y1, x2, y2, fill="red", width=5)
-        elif edge == 'right':
-            x1, y1 = ox + W*scale, oy + (mid - marker_len/2)*scale
-            x2, y2 = ox + W*scale, oy + (mid + marker_len/2)*scale
-            self.canvas.create_line(x1, y1, x2, y2, fill="red", width=5)
+            x1, y1, x2, y2 = ox, oy+(mid-marker_len/2)*scale, ox, oy+(mid+marker_len/2)*scale
+        else: # right
+            x1, y1, x2, y2 = ox+W*scale, oy+(mid-marker_len/2)*scale, ox+W*scale, oy+(mid+marker_len/2)*scale
+        self.canvas.create_line(x1, y1, x2, y2, fill="red", width=5)
 
 if __name__ == "__main__":
     root = tk.Tk()
     app = App(root)
     root.mainloop()
-
