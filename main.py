@@ -9,9 +9,9 @@ from algorithm.SingleCorridor import SingleCorridorAlgorithm
 from algorithm.SimulatedAnnealing import SimulatedAnnealing
 
 ALGORITHMS: dict[str, type[AbstractAlgorithm]] = {
+    "Simulated Annealing": SimulatedAnnealing,
     "Backtracking": Backtracker,
     "Single Corridor": SingleCorridorAlgorithm,
-    "Simulated Annealing": SimulatedAnnealing,
 }
 
 
@@ -58,7 +58,7 @@ class App:
         self.text.pack(fill=tk.Y)
         self.text.insert(
             "1.0",
-            "LivingRm 6 5 1\nKitchen 7 4 1\nBed1 4 4 0\nBed2 5 5 0\nBath1 3 8 1\nDining 6 6 0\nOffice 3 9 1\nBath2 4 7 1\nCloset 3 3 0\nGarage 4.5 4 1",
+            "LivingRm 6 5 1\nKitchen 7 4 1\nBed1 4 4 0\nBed2 5 5 0\nBath1 3 8 1\nDining 6 6 0\nOffice 3 9 1",
         )
         self.canvas = tk.Canvas(main, bg="white")
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
