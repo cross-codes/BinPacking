@@ -6,10 +6,12 @@ from ds.RoomSpec import RoomSpec
 from algorithm.AbstractAlgorithm import AbstractAlgorithm
 from algorithm.Backtracker import Backtracker
 from algorithm.SingleCorridor import SingleCorridorAlgorithm
+from algorithm.SimulatedAnnealing import SimulatedAnnealing
 
 ALGORITHMS: dict[str, type[AbstractAlgorithm]] = {
     "Backtracking": Backtracker,
     "Single Corridor": SingleCorridorAlgorithm,
+    "Simulated Annealing": SimulatedAnnealing,
 }
 
 
