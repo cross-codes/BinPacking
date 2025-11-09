@@ -85,7 +85,10 @@ class App:
 
         AlgorithmClass = ALGORITHMS[self.algo_var.get()]
         gen = AlgorithmClass(self.w_var.get(), self.h_var.get(), rooms)
-        self.layouts = gen.generate()
+        layouts = gen.generate()
+        layouts.sort(key=lambda L: L.placed_count, reverse=True)
+
+        self.layouts = layouts
         self.idx = 0
 
         self.status.config(text=f"Found {len(self.layouts)} valid layouts.")
