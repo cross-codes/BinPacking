@@ -131,7 +131,7 @@ class App:
         self.text.pack(fill=tk.Y)
         self.text.insert(
             "1.0",
-            "MeetingRm1 8 6 1\nConfRm 15 10 1\nMeetingRm2 9 9 0\nCabin1 10 12 1\nCabin2 10 12 1\nCabin3 7 6 1\nWorkstations1 8 6 1\nWorkstations2 8 6 1\nWorkstations3 8 6 1",
+            "MeetingRm 9 9 1\nCabin1 6 7 1\nCabin2 6 7 1\nCabin3 6 7 1\nMdCabin1 10 12 1\nMdCabin2 10 12 1\nWorkstations1 8 6 1\nWorkstations2 8 6 1\nWorkstations3 8 6 1\nConfRoom 10 15 1\nOpenStorage 5 7 1\nPantry 6 7 1\nWC 5 6 1\n",
         )
         self.canvas = tk.Canvas(main, bg="white")
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)

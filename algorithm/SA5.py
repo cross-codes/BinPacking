@@ -419,9 +419,6 @@ def repair_by_nudges(
     return rooms_copy, nudges_used, backbone, touched, success
 
 
-# ----------------------------
-# Energy: tuned constants (adjacency reward large, remote_penalty large)
-# ----------------------------
 def energy_of_layout(
     rooms,
     plot_w,
@@ -472,7 +469,6 @@ def energy_of_layout(
     penalty_area = 0
     if total_rooms_area > plot_area_max_rooms:
         penalty_area = (total_rooms_area - plot_area_max_rooms) * 10000
-    # tuned energy: minimize bbox, maximize adjacency, penalize remote corridor, penalize nudges lightly
     E = (
         1.0 * bbox_area
         - adjacency_reward * spanned
@@ -484,9 +480,6 @@ def energy_of_layout(
     return E
 
 
-# ----------------------------
-# Neighbor generator: stronger center pull
-# ----------------------------
 def neighbor_rooms_state(rooms, plot_w, plot_h, center_pull_prob=0.25):
     ns = copy.deepcopy(rooms)
     r = random.random()
@@ -534,11 +527,7 @@ def neighbor_rooms_state(rooms, plot_w, plot_h, center_pull_prob=0.25):
     return ns
 
 
-# ----------------------------
-# Post-refinement: local sweeps (greedy)
-# ----------------------------
 def post_refine(rooms, plot_w, plot_h, backbone, corridor_width, plot_area_max_rooms):
-    # attempt small local moves that reduce energy; few sweeps
     best_rooms = copy.deepcopy(rooms)
     best_backbone = set(backbone)
     best_E = energy_of_layout(
@@ -547,7 +536,6 @@ def post_refine(rooms, plot_w, plot_h, backbone, corridor_width, plot_area_max_r
     for sweep in range(8):
         improved = False
         for r in best_rooms:
-            # try moves in small neighborhood
             original = (r.x, r.y, r.rot)
             neighbors = []
             for dx in (-1, 0, 1):
@@ -594,15 +582,11 @@ def post_refine(rooms, plot_w, plot_h, backbone, corridor_width, plot_area_max_r
                     break
                 else:
                     r.x, r.y, r.rot = original
-            # end neighbor loop
         if not improved:
             break
     return best_rooms, best_backbone, best_E
 
 
-# ----------------------------
-# SA driver with multi-restarts and improved tuning
-# ----------------------------
 def run_sa_with_restarts(
     plot_w,
     plot_h,
@@ -622,7 +606,6 @@ def run_sa_with_restarts(
 ):
     best_overall = None
     for restart in range(restarts):
-        # run one SA (similar to previous improved algorithm)
         rooms = copy.deepcopy(rooms_input)
         rs = sorted(rooms, key=lambda r: r.w0 * r.h0, reverse=True)
         occ = [[False] * plot_h for _ in range(plot_w)]
@@ -810,7 +793,6 @@ def run_sa_with_restarts(
                         best_nudges = nudges_used
                 total_iters += 1
             T *= alpha
-        # post-refine the best from this restart
         refined_rooms, refined_backbone, refined_E = post_refine(
             best_rooms,
             plot_w,
@@ -834,9 +816,6 @@ def run_sa_with_restarts(
     return best_overall
 
 
-# ----------------------------
-# GUI
-# ----------------------------
 class App:
     def __init__(self, root):
         self.root = root
