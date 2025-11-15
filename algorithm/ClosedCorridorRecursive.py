@@ -9,7 +9,7 @@ import copy
 import itertools
 
 
-class SimulatedAnnealing(AbstractAlgorithm):
+class ClosedCorridorRecursive(AbstractAlgorithm):
     def generate(self) -> list[Layout]:
         solutions = []
 
