@@ -1,7 +1,7 @@
 from algorithm.AbstractAlgorithm import AbstractAlgorithm
 from ds.RoomSpec import RoomSpec
 
-from algorithm.SA5 import Room, run_sa_with_restarts, energy_of_layout
+from algorithm.SA import Room, run_sa_with_restarts, energy_of_layout
 
 
 class SimulatedAnnealingWrapper(AbstractAlgorithm):
