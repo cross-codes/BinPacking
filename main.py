@@ -1,7 +1,8 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog
 from tkinter.scrolledtext import ScrolledText
 import threading
+import json
 from constants import *
 from ds.RoomSpec import RoomSpec
 from algorithm.AbstractAlgorithm import AbstractAlgorithm
@@ -122,6 +123,12 @@ class App:
         ).grid(row=2, column=3, sticky=tk.W)
         self.generate_btn = ttk.Button(top, text="Generate", command=self.generate)
         self.generate_btn.pack(side=tk.RIGHT, padx=6)
+
+        self.export_btn = ttk.Button(
+            top, text="Export JSON", command=self.export_json, state="disabled"
+        )
+        self.export_btn.pack(side=tk.RIGHT, padx=6)
+
         left = ttk.Frame(main)
         left.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 0), pady=6)
         ttk.Label(left, text="Rooms (Name W H [interchangeable 1/0]):").pack(
@@ -165,6 +172,7 @@ class App:
         self.generate_btn.config(state="disabled")
         self.prev_btn.config(state="disabled")
         self.next_btn.config(state="disabled")
+        self.export_btn.config(state="disabled")
         self.root.update_idletasks()
         rooms = self.parse_rooms()
         self.total_rooms = len(rooms)
@@ -221,7 +229,86 @@ class App:
         if self.layouts:
             self.prev_btn.config(state="normal")
             self.next_btn.config(state="normal")
+            self.export_btn.config(state="normal")
         self.redraw()
+
+    def export_json(self):
+        if not self.layouts:
+            return
+
+        layout_data = self.layouts[self.idx]
+        export_data = {}
+
+        if isinstance(layout_data, dict):
+            backbone = layout_data.get("backbone")
+            backbone_list = list(backbone) if backbone is not None else []
+
+            export_data = {
+                "algorithm": "Simulated Annealing",
+                "plot_width": int(self.w_var.get()),
+                "plot_height": int(self.h_var.get()),
+                "energy": layout_data.get("energy", 0),
+                "nudges": layout_data.get("nudges", 0),
+                "rooms": [
+                    {
+                        "name": r.name,
+                        "x": r.x,
+                        "y": r.y,
+                        "w": r.w,
+                        "h": r.h,
+                        "rotated": getattr(r, "rotated", False)
+                        or getattr(r, "rot", False),
+                    }
+                    for r in layout_data["rooms"]
+                ],
+                "backbone": backbone_list,  # Use the list version
+            }
+        else:
+            backbone = getattr(layout_data, "backbone", None)
+            backbone_list = list(backbone) if backbone is not None else []
+
+            export_data = {
+                "algorithm": self.algo_var.get(),
+                "plot_width": layout_data.plot_w,
+                "plot_height": layout_data.plot_h,
+                "rooms": [
+                    {
+                        "name": r.name,
+                        "x": r.x,
+                        "y": r.y,
+                        "w": r.w,
+                        "h": r.h,
+                        "rotated": getattr(r, "rotated", False)
+                        or getattr(r, "rot", False),
+                    }
+                    for r in layout_data.placed
+                ],
+                "corridor": (
+                    {
+                        "x": layout_data.corridor.x,
+                        "y": layout_data.corridor.y,
+                        "w": layout_data.corridor.w,
+                        "h": layout_data.corridor.h,
+                    }
+                    if layout_data.corridor
+                    else None
+                ),
+                "backbone": backbone_list, # Use the list version
+            }
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            title="Export Layout",
+        )
+
+        if file_path:
+            try:
+                with open(file_path, "w") as f:
+                    json.dump(export_data, f, indent=4)
+                self.status.config(text=f"Saved to {file_path}", foreground="green")
+            except Exception as e:
+                self.status.config(text=f"Error saving: {e}", foreground="red")
 
     def prev(self):
         if self.layouts:
@@ -283,9 +370,20 @@ class App:
         scale = min((cw - 2 * pad) / W, (ch - 2 * pad) / H) if W * H > 0 else 1
         ox, oy = (cw - W * scale) / 2, (ch - H * scale) / 2
 
+        # Draw 1-unit Grid
+        grid_color = "#e8e8e8"  # Very light gray for background grid
+        for i in range(int(W) + 1):
+            x = ox + i * scale
+            self.canvas.create_line(x, oy, x, oy + H * scale, fill=grid_color, width=1)
+        for i in range(int(H) + 1):
+            y = oy + i * scale
+            self.canvas.create_line(ox, y, ox + W * scale, y, fill=grid_color, width=1)
+
+        # Draw Main Boundary (removed fill so grid is visible)
         self.canvas.create_rectangle(
-            ox, oy, ox + W * scale, oy + H * scale, fill="#ffffff", outline=""
+            ox, oy, ox + W * scale, oy + H * scale, fill="", outline=""
         )
+
         corridor_fill = "#d0d0d0"
         if backbone:
             for cx, cy in backbone:

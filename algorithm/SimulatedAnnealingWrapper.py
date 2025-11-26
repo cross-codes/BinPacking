@@ -1,3 +1,4 @@
+import time
 from algorithm.AbstractAlgorithm import AbstractAlgorithm
 from ds.RoomSpec import RoomSpec
 
@@ -32,6 +33,8 @@ class SimulatedAnnealingWrapper(AbstractAlgorithm):
         self.center_pull_prob = center_pull_prob
 
     def generate(self) -> list[dict]:
+        start_time = time.time()
+
         rooms_internal = [
             Room(w=spec.w, h=spec.h, idx=i, name=spec.name)
             for i, spec in enumerate(self.rooms)
@@ -39,8 +42,6 @@ class SimulatedAnnealingWrapper(AbstractAlgorithm):
 
         generated_layouts = []
         for i in range(self.num_layouts):
-            print(f"--- Starting SA Generation Run {i+1}/{self.num_layouts} ---")
-
             result = run_sa_with_restarts(
                 plot_w=int(self.W),
                 plot_h=int(self.H),
@@ -51,6 +52,8 @@ class SimulatedAnnealingWrapper(AbstractAlgorithm):
                 nudges_budget=self.nudges_budget,
                 strict_mode=self.strict_mode,
                 center_pull_prob=self.center_pull_prob,
+                adjacency_reward=self.adj_reward,
+                remote_penalty=self.remote_penalty,
             )
 
             if result and result.get("success"):
@@ -65,5 +68,9 @@ class SimulatedAnnealingWrapper(AbstractAlgorithm):
                     remote_penalty=self.remote_penalty,
                 )
                 generated_layouts.append(result)
+
+        end_time = time.time()
+        elapsed = end_time - start_time
+        print(f"Total generation time: {elapsed:.4f} seconds")  # Print result
 
         return generated_layouts

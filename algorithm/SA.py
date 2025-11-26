@@ -527,11 +527,11 @@ def neighbor_rooms_state(rooms, plot_w, plot_h, center_pull_prob=0.25):
     return ns
 
 
-def post_refine(rooms, plot_w, plot_h, backbone, corridor_width, plot_area_max_rooms):
+def post_refine(rooms, plot_w, plot_h, backbone, corridor_width, plot_area_max_rooms, adjacency_reward, remote_penalty):
     best_rooms = copy.deepcopy(rooms)
     best_backbone = set(backbone)
     best_E = energy_of_layout(
-        best_rooms, plot_w, plot_h, best_backbone, 0, plot_area_max_rooms
+        best_rooms, plot_w, plot_h, best_backbone, 0, plot_area_max_rooms, adjacency_reward=adjacency_reward, remote_penalty=remote_penalty
     )
     for sweep in range(8):
         improved = False
@@ -572,8 +572,8 @@ def post_refine(rooms, plot_w, plot_h, backbone, corridor_width, plot_area_max_r
                     backbone_cand,
                     0,
                     plot_area_max_rooms,
-                    adjacency_reward=1200.0,
-                    remote_penalty=50.0,
+                    adjacency_reward=adjacency_reward,
+                    remote_penalty=remote_penalty,
                 )
                 if E < best_E:
                     best_E = E
@@ -603,6 +603,8 @@ def run_sa_with_restarts(
     restarts=3,
     progress_cb=None,
     center_pull_prob=0.25,
+    adjacency_reward=1200.0,  
+    remote_penalty=50.0
 ):
     best_overall = None
     for restart in range(restarts):
@@ -764,8 +766,8 @@ def run_sa_with_restarts(
                         backbone_cand,
                         nudges_cand,
                         plot_area_max_rooms,
-                        adjacency_reward=1200.0,
-                        remote_penalty=50.0,
+                        adjacency_reward=adjacency_reward,
+                        remote_penalty=remote_penalty,
                     )
                 cur_E = energy_of_layout(
                     rooms_after,
@@ -800,6 +802,8 @@ def run_sa_with_restarts(
             best_backbone,
             corridor_width,
             plot_area_max_rooms,
+            adjacency_reward=adjacency_reward,
+            remote_penalty=remote_penalty
         )
         if best_overall is None or refined_E < best_overall["energy"]:
             best_overall = {
